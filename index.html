@@ -953,6 +953,15 @@ thead th { font-weight: 600; }
 .int-s { font-family: "Cambria Math", "STIX Two Math", "Latin Modern Math", "DejaVu Serif", "Times New Roman", serif; font-size: 1.7em; line-height: 1; display: inline-block; transform: scaleY(1.2); margin-right: .05em; }
 .int-l { font-size: .68em; line-height: 1.1; margin-left: .1em; align-self: stretch; padding: .05em 0; gap: .5em; }
 
+/* drawn radical sign in the worked steps */
+.rad { display: inline-flex; align-items: stretch; vertical-align: middle; margin: 0 .05em; }
+.rad-i { font-size: .6em; align-self: flex-start; margin-right: -.45em; margin-top: .15em; }
+.rad-s { flex: none; width: .62em; display: block; }
+.rad-s svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.rad-c { display: inline-flex; align-items: center; border-top: 1.3px solid currentColor; padding: .14em .12em 0 .14em; }
+/* editor radical: the drawn sign replaces the font character */
+.mq-math-mode .mq-sqrt-prefix { padding-top: 0; top: 0; }
+
 </style>
 </head>
 <body>
@@ -1870,7 +1879,10 @@ function fmtPM(v, u) {
 }
 const fmtQN = q => (q.u ? fmtPM(q.v, q.u) : fmtNum(q.v));
 // brackets that stretch to the height of what they enclose (plain text brackets otherwise)
-const TALL = h => /class="(fr|intg|pg)"/.test(h);
+const TALL = h => /class="(fr|intg|pg|rad)"/.test(h);
+// a radical sign drawn as a stretchy line, so its top always meets the bar over the contents
+const RAD_SVG = '<svg viewBox="0 0 10 20" preserveAspectRatio="none" aria-hidden="true"><path d="M0.6 12.2 L2.8 10.8 L5.2 19.3 L10 0.6" fill="none" stroke="currentColor" stroke-width="1.25" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+function rad(h, index) { return `<span class="rad" role="img" aria-label="${index ? 'cube root' : 'square root'}">${index ? `<span class="rad-i">${index}</span>` : ''}<span class="rad-s">${RAD_SVG}</span><span class="rad-c">${h}</span></span>`; }
 function paren(h) { return TALL(h) ? `<span class="pg"><span class="pg-l"></span><span class="pg-c">${h}</span><span class="pg-r"></span></span>` : `(${h}${/<\/sup>(<\/span>)*$/.test(h) ? '<span class="hs"></span>' : ''})`; }
 // an exponent on a tall base is anchored to the top of the base
 function supOn(base, exp) { return TALL(base) ? `<span class="pw">${base}<span class="pw-e">${exp}</span></span>` : `${base}<sup>${exp}</sup>`; }
@@ -1926,7 +1938,7 @@ function renderExpr(n, mode, parentPrec = 0, strict = false) {
   else if (n.t === 'bin') h = renderExpr(n.a, mode, p) + ` <span class="op">${OPS[n.op]}</span> ` + renderExpr(n.b, mode, p, n.op === '-' || n.op === '/');
   else if (n.t === 'neg') h = '<span class="op">−</span>' + renderExpr(n.a, mode, 3);
   else if (n.t === 'pow') h = supOn(renderExpr(n.a, mode, 7), renderExpr(n.b, mode, 0));
-  else if (n.t === 'fn') h = `<span class="fn">${n.name === 'sqrt' ? '√' : n.name}</span>(${renderExpr(n.a, mode, 0)})`;
+  else if (n.t === 'fn') h = n.name === 'sqrt' ? rad(renderExpr(n.a, mode, 0)) : n.name === 'cbrt' ? rad(renderExpr(n.a, mode, 0), 3) : `<span class="fn">${n.name}</span>(${renderExpr(n.a, mode, 0)})`;
   if (p < parentPrec || (strict && p === parentPrec)) h = paren(h);
   return h;
 }
@@ -2333,8 +2345,8 @@ function renderCalc(c, i, total, snapshot, R) {
   } else if (c.kind === 'fn') {
     const f = n.name; const root = f === 'sqrt' || f === 'cbrt';
     title = f === 'sqrt' ? 'Take the square root' : f === 'cbrt' ? 'Take the cube root' : f === 'abs' ? 'Absolute value' : `Evaluate ${f}`;
-    work = `<span class="fn">${f === 'sqrt' ? '√' : f}</span>(${qHTML(c.a)})`;
-    nums = `${f === 'sqrt' ? '√' : f}(${fmtNum(c.a.v)}) = ${fmtNum(c.r.v)}`;
+    work = root ? rad(qHTML(c.a), f === 'cbrt' ? 3 : 0) : `<span class="fn">${f}</span>(${qHTML(c.a)})`;
+    nums = `${root ? rad(fmtNum(c.a.v), f === 'cbrt' ? 3 : 0) : `${f}(${fmtNum(c.a.v)})`} = ${fmtNum(c.r.v)}`;
     units = root ? `<p>A ${f === 'sqrt' ? 'square' : 'cube'} root is a power of ${f === 'sqrt' ? '½' : '⅓'}, so every unit exponent is multiplied by ${f === 'sqrt' ? '½' : '⅓'}.</p>` + ledger([{ label: 'before', d: c.a.d }, { label: f === 'sqrt' ? '× ½' : '× ⅓', d: c.r.d, cls: 'res' }], colsOf(c.a.d))
       : f === 'abs' ? `<p>Units are unchanged: ${U(c.r.d)}.</p>` : '<p>Pure number in, pure number out.</p>';
   } else if (c.kind === 'call') {
@@ -2644,7 +2656,28 @@ const coarse = window.matchMedia && matchMedia('(pointer: coarse)').matches;
 const linesEl = qs('#lines'), out = qs('#out');
 let LINES = [], ACTIVE = 0, RESULTS = [], timer = null;
 
-function schedule() { clearTimeout(timer); timer = setTimeout(run, 180); requestAnimationFrame(() => fixSups(linesEl)); }
+function schedule() { clearTimeout(timer); timer = setTimeout(run, 180); requestAnimationFrame(() => { fixRoots(linesEl); fixSups(linesEl); }); }
+// The editor draws √ with a font character whose top doesn't meet the bar in this font.
+// Replace it with a line drawing sized to the contents, joined exactly to the bar.
+function fixRoots(root) {
+  root.querySelectorAll('.mq-sqrt-prefix').forEach(pre => {
+    const stem = pre.nextElementSibling; if (!stem) return;
+    pre.style.transform = 'none'; pre.style.verticalAlign = 'top'; pre.style.color = 'inherit';
+    const cs = getComputedStyle(stem); const fs = parseFloat(cs.fontSize) || 16;
+    const bw = Math.max(1, Math.round(fs * 0.055 * 2) / 2);
+    stem.style.borderTopWidth = bw + 'px';
+    const H = stem.getBoundingClientRect().height; if (!H) return;
+    const W = Math.max(fs * 0.5, Math.min(fs * 0.75, H * 0.32));
+    const y0 = bw / 2, key = `${Math.round(H)}|${Math.round(W)}|${bw}`;
+    if (pre.dataset.rk !== key) {
+      pre.dataset.rk = key;
+      pre.innerHTML = `<svg width="${W.toFixed(1)}" height="${H.toFixed(1)}" viewBox="0 0 ${W.toFixed(2)} ${H.toFixed(2)}" style="display:block;overflow:visible" aria-hidden="true"><path d="M${(bw / 2).toFixed(2)} ${(H * 0.62).toFixed(2)} L${(W * 0.24).toFixed(2)} ${(H * 0.55).toFixed(2)} L${(W * 0.52).toFixed(2)} ${(H - bw / 2).toFixed(2)} L${W.toFixed(2)} ${y0.toFixed(2)}" fill="none" stroke="currentColor" stroke-width="${bw}" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+    }
+    const svg = pre.firstElementChild; svg.style.marginTop = '0px';
+    const d = stem.getBoundingClientRect().top - svg.getBoundingClientRect().top;
+    svg.style.marginTop = d.toFixed(2) + 'px';
+  });
+}
 // The editor puts an exponent at a fixed height, which only suits one-line bases.
 // After a tall bracket, fraction or root, raise the exponent to the top of that base.
 function fixSups(root) {
@@ -2732,7 +2765,7 @@ function setActive(i) {
 function setLines(items) {
   LINES.forEach(l => l.row.remove()); LINES = [];
   items.forEach(t => makeLine(t));
-  requestAnimationFrame(() => fixSups(linesEl));
+  requestAnimationFrame(() => { fixRoots(linesEl); fixSups(linesEl); });
   ACTIVE = LINES.length - 1;
   LINES.forEach((l, k) => l.row.classList.toggle('active', k === ACTIVE));
   run();
@@ -3021,7 +3054,7 @@ if (!coarse && LINES[ACTIVE].mf) LINES[ACTIVE].mf.focus();
 function remeasure() {
   LINES.forEach(l => { if (l.mf) { const t = l.mf.latex(); l.mf.latex(''); l.mf.latex(t); } });
   STATICS.forEach(sm => { const t = sm.latex(); sm.latex(''); sm.latex(t); });
-  fixSups(document);
+  fixRoots(document); fixSups(document);
 }
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => requestAnimationFrame(remeasure));
 qs('#padToggle').addEventListener('click', () => requestAnimationFrame(remeasure));
